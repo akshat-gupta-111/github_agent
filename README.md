@@ -97,6 +97,24 @@ Quantifiable metrics do not capture non-numeric data like domain alignment, code
 
 The system packages the telemetry arrays into an isolated context object and passes it to an evaluation node configured with a strict, non-heuristic system prompt.
 
+## 1. Primary Technology Stack Identification
+```text
+The deterministic engine extracts a frequency map of all programming languages used across the user's repositories. To identify the primary tech stack, the ingestion layer truncates this list to the top five highest-frequency technologies.
+
+The LLM agent then cross-references this frequency distribution with the semantic context of the user's recent commits and repository descriptions. This intersection ensures that the identified stack reflects active, intentional engineering rather than legacy code or incidental boilerplate.
+```
+
+## 2. Job Role Inference
+```text
+Job role inference relies heavily on recent architectural decisions and development velocity. The pipeline executes the following workflow:
+
+Temporal Sorting: The execution layer sorts all repositories by the updated_at timestamp.
+
+Context Extraction: The system extracts the metadata (name, description, and primary language) of the 10 most recently active repositories.
+
+Semantic Deduction: The agent analyzes this focused, chronological payload to identify recurring engineering domains. By evaluating the deployment architectures (e.g., neural network configurations, full-stack web frameworks, or embedded mesh networks), the agent accurately deduces the developer's current trajectory, classifying them into specialized roles such as AI/ML Engineer, Backend Systems Developer, or IoT Architect.
+```
+
 ### Agent System Prompt Specification
 
 ```text
