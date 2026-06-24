@@ -1,37 +1,60 @@
 import math
 
-def calculate_consistency_score(monthly_contributions: dict, target_commits: int = 15, cap: int = 30) -> float:
+def calculate_consistency_score(monthly_contributions: dict, epsilon: float = 1.0) -> dict:
     """
-    Calculates the consistency score using a capped intensity and active floor model.
+    Calculates the consistency score using the Coefficient of Variation (CV) model.
+    Applies Base-2 Logarithmic dampening to prevent massive hackathon spikes 
+    from destroying the variance calculation of an otherwise consistent developer.
     """
     if not monthly_contributions:
-        return 0.0
+        return {"score": 0.0, "details": {"mu": 0.0, "sigma": 0.0, "total_commits": 0, "epsilon": epsilon}}
 
-    total_months = len(monthly_contributions)
-    active_months = 0
-    capped_commits_sum = 0
+    commits = list(monthly_contributions.values())
+    total_months = len(commits)
+    raw_total_commits = sum(commits)
+    
+    if raw_total_commits == 0 or total_months == 0:
+        return {"score": 0.0, "details": {"mu": 0.0, "sigma": 0.0, "total_commits": 0, "epsilon": epsilon}}
 
-    for commits in monthly_contributions.values():
-        if commits > 0:
-            active_months += 1
-        capped_commits_sum += min(commits, cap)
+    # THE FIX: Apply Log-Dampening to the dataset before statistical analysis
+    log_commits = [math.log2(c + 1) for c in commits]
 
-    # Calculate the two halves of the score
-    floor_score = 0.5 * (active_months / total_months)
-    intensity_ratio = capped_commits_sum / (total_months * target_commits)
-    intensity_score = 0.5 * min(1.0, intensity_ratio)
+    # Calculate Log-Mean (μ)
+    log_mu = sum(log_commits) / total_months
+    
+    # Calculate Log-Variance and Log-Standard Deviation (σ)
+    variance = sum((c - log_mu) ** 2 for c in log_commits) / total_months
+    log_sigma = math.sqrt(variance)
 
-    return round((floor_score + intensity_score) * 100, 2)
+    # Coefficient of Variation logic with Epsilon floor
+    score = max(0.0, 100.0 * (1.0 - (log_sigma / (log_mu + epsilon))))
 
-def calculate_community_score(repositories: list) -> float:
+    return {
+        "score": round(score, 2),
+        "details": {
+            "mu": round(log_mu, 2), # This is now the Log-Mean
+            "sigma": round(log_sigma, 2), # This is now the Log-Deviation
+            "total_commits": raw_total_commits,
+            "epsilon": epsilon
+        }
+    }
+def calculate_community_score(
+    repositories: list, 
+    sweet_spot_low: float = 0.15, 
+    sweet_spot_high: float = 0.85, 
+    points_per_collab: float = 20.0,
+    partial_credit: float = 0.2,
+    star_bonus: float = 2.0,
+    fork_bonus: float = 5.0
+) -> dict:
     """
-    Calculates the community score based on collaborative repositories,
-    rewarding users who hit the 'Collaboration Sweet Spot' (15% - 85% of commits).
+    Calculates the community score, rewarding users who hit the 
+    'Collaboration Sweet Spot' in shared repositories, with adjustable penalties and bonuses.
     """
     if not repositories:
-        return 0.0
+        return {"score": 0.0, "details": {"engagement_sum": 0.0, "total_stars": 0, "total_forks": 0}}
 
-    engagement_sum = 0
+    engagement_sum = 0.0
     total_stars = 0
     total_forks = 0
 
@@ -48,83 +71,169 @@ def calculate_community_score(repositories: list) -> float:
 
         # Identify shared repositories (where the user isn't the sole contributor)
         if total_commits > user_commits:
-            # Collaboration Sweet Spot Check
-            if 0.15 <= user_ratio <= 0.85:
-                engagement_sum += 1.0
+            if sweet_spot_low <= user_ratio <= sweet_spot_high:
+                engagement_sum += 1.0  # Perfect engagement
             elif user_ratio > 0.0:
-                # Partial credit if they contributed, but fell outside the ideal band
-                engagement_sum += 0.2 
+                engagement_sum += partial_credit  # Configurable partial credit
 
-    # Base points from engagement (20 points per healthy collab), plus small bonuses for stars/forks
-    score = (engagement_sum * 20) + (total_stars * 2) + (total_forks * 5)
+    # Base points from engagement, plus dynamic bonuses for raw repo stars/forks
+    score = (engagement_sum * points_per_collab) + (total_stars * star_bonus) + (total_forks * fork_bonus)
     
-    return round(min(100.0, score), 2)
+    return {
+        "score": round(min(100.0, score), 2),
+        "details": {
+            "engagement_sum": round(engagement_sum, 2),
+            "sweet_spot_low": sweet_spot_low,
+            "sweet_spot_high": sweet_spot_high,
+            "points_per_collab": points_per_collab,
+            "partial_credit": partial_credit,
+            "star_bonus": star_bonus,
+            "fork_bonus": fork_bonus,
+            "total_stars": total_stars,
+            "total_forks": total_forks
+        }
+    }
 
-def calculate_technology_score(technologies: dict) -> float:
+def calculate_technology_score(
+    technologies: dict, 
+    alpha: float = 5.0, 
+    beta: float = 3.0, 
+    breadth_ceiling: float = 8.0
+) -> dict:
     """
-    Calculates the technology score balancing breadth (total languages) 
-    and depth (logarithmic scaling of usage frequency).
+    Calculates the technology score balancing breadth and depth.
+    Applies the breadth_ceiling to prevent gaming the system with high language counts.
     """
     if not technologies:
-        return 0.0
+        return {"score": 0.0, "details": {"L": 0, "capped_L": 0, "log_sum": 0.0, "alpha": alpha, "beta": beta, "breadth_ceiling": breadth_ceiling}}
 
-    total_languages = len(technologies)
+    L = len(technologies)
+    capped_L = min(L, breadth_ceiling) 
     
-    # Breadth: Maxes out at 8 distinct technologies (40% of the tech score)
-    breadth_score = (min(total_languages, 8) / 8.0) * 40
+    log_sum = sum(math.log2(count + 1) for count in technologies.values())
+    
+    score = min(100.0, (alpha * capped_L) + (beta * log_sum))
 
-    # Depth: Logarithmic sum of frequencies (60% of the tech score)
-    depth_sum = sum(math.log2(count + 1) for count in technologies.values())
-    depth_score = min(1.0, depth_sum / 20.0) * 60
+    return {
+        "score": round(score, 2),
+        "details": {
+            "L": L,
+            "capped_L": capped_L,
+            "log_sum": round(log_sum, 2),
+            "alpha": alpha,
+            "beta": beta,
+            "breadth_ceiling": breadth_ceiling
+        }
+    }
 
-    return round(min(100.0, breadth_score + depth_score), 2)
-
-def calculate_advanced_score(forked_repositories: list) -> float:
+def calculate_advanced_score(forked_repositories: list, gamma: float = 10.0, adv_target: int = 3) -> dict:
     """
-    Calculates the advanced score, rewarding users who push code to 
-    highly starred/forked upstream repositories.
+    Calculates open-source impact using Base-10 logarithms.
+    Caps max points per repository based on adv_target and saves individual repo math.
+    Includes defensive checks to prevent math domain errors from negative/missing API data.
     """
-    if not forked_repositories:
-        return 0.0
+    if not forked_repositories or adv_target < 1:
+        return {"score": 0.0, "details": {"active_forks": 0, "total_impact": 0.0, "gamma": gamma, "adv_target": adv_target, "max_per_repo": 100.0, "repo_breakdowns": []}}
 
     score = 0.0
+    active_forks = 0
+    total_impact = 0.0
+    max_per_repo = 100.0 / adv_target
+    
+    repo_breakdowns = []
+
     for fork in forked_repositories:
-        stars = fork.get("stars_count", 0)
-        forks = fork.get("forks_count", 0)
-        user_commits = fork.get("user_commits_count", 0)
+        # DEFENSIVE CHECK 1: Ensure values are integers and fallback to 0 if None
+        stars = int(fork.get("stars_count") or 0)
+        forks = int(fork.get("forks_count") or 0)
+        user_commits = int(fork.get("user_commits_count") or 0)
+        repo_name = fork.get("name", "Unknown Repo")
 
         if user_commits > 0:
-            # The impact of the repo is logarithmic, multiplied by the user's active commits
-            repo_impact = 10 * math.log10(stars + forks + 1)
-            score += repo_impact * user_commits
+            active_forks += 1
+            
+            # DEFENSIVE CHECK 2: Guarantee the log input is at least 1. 
+            # If stars/forks came back as -1, max() forces it to 1, yielding a safe log10(1) = 0.
+            safe_log_input = max(1, stars + forks + 1)
+            base_impact = math.log10(safe_log_input)
+            
+            raw_repo_score = gamma * base_impact * user_commits
+            capped_repo_score = min(raw_repo_score, max_per_repo)
+            
+            total_impact += base_impact * user_commits
+            score += capped_repo_score
+            
+            repo_breakdowns.append({
+                "name": repo_name,
+                "stars": stars if stars >= 0 else "Unknown (Deleted/Private)",
+                "forks": forks if forks >= 0 else 0,
+                "commits": user_commits,
+                "base_impact": round(base_impact, 3),
+                "raw_score": round(raw_repo_score, 2),
+                "capped_score": round(capped_repo_score, 2)
+            })
 
-    return round(min(100.0, score), 2)
+    return {
+        "score": round(min(100.0, score), 2),
+        "details": {
+            "active_forks": active_forks,
+            "total_impact": round(total_impact, 2),
+            "gamma": gamma,
+            "adv_target": adv_target,
+            "max_per_repo": round(max_per_repo, 2),
+            "repo_breakdowns": repo_breakdowns
+        }
+    }
 
-def calculate_management_score(profile: dict) -> float:
+def calculate_management_score(
+    profile: dict, 
+    target_ratio: float = 0.75, 
+    bio_bonus: float = 10.0, 
+    name_bonus: float = 5.0
+) -> dict:
     """
-    Calculates the management score based on profile completeness and README ratios.
+    Calculates the management score based on profile completeness and README presence.
+    Dynamically adjusts based on strict UI bonus values.
     """
     readme_ratio = profile.get("readme_ratio", 0.0)
     has_bio = bool(profile.get("bio"))
     has_name = bool(profile.get("name"))
 
-    # 85 points available for hitting the target readme ratio (75%)
-    readme_score = min(1.0, readme_ratio / 0.75) * 85
+    # Safe division check in case the user forces the slider to 0.0
+    safe_target = target_ratio if target_ratio > 0 else 0.01
+
+    readme_max_points = 100.0 - bio_bonus - name_bonus
+    readme_score = min(1.0, readme_ratio / safe_target) * readme_max_points
     
-    # Flat bonuses for filling out the profile
-    bio_score = 10 if has_bio else 0
-    name_score = 5 if has_name else 0
+    bio_score = bio_bonus if has_bio else 0.0
+    name_score = name_bonus if has_name else 0.0
 
-    return round(min(100.0, readme_score + bio_score + name_score), 2)
+    return {
+        "score": round(min(100.0, readme_score + bio_score + name_score), 2),
+        "details": {
+            "readme_ratio": readme_ratio,
+            "target_ratio": target_ratio,
+            "has_bio": has_bio,
+            "has_name": has_name,
+            "bio_bonus": bio_bonus,
+            "name_bonus": name_bonus
+        }
+    }
 
-def calculate_final_score(scores: dict, weights: dict) -> float:
+def calculate_final_score(scores: dict, weights: dict) -> dict:
     """
     Generates the final weighted score based on the individual module scores 
-    and the weights loaded from the CSV.
+    and the normalized weights applied from the UI.
     """
     final_score = 0.0
-    for category, score in scores.items():
+    for category, module_data in scores.items():
         weight = float(weights.get(category, 0.0))
-        final_score += score * weight
+        final_score += module_data["score"] * weight
         
-    return round(final_score, 2)
+    return {
+        "score": round(final_score, 2),
+        "details": {
+            "applied_weights": weights,
+            "components": {k: v["score"] for k, v in scores.items()}
+        }
+    }
